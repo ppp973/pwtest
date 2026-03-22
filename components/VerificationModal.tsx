@@ -1,115 +1,109 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ShieldAlert, ExternalLink, Loader2 } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ShieldCheck, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
+import { getUserId, generateToken, isVerified } from '@/lib/verification';
+
+const VPLINK_API_TOKEN = '64cb3994119c683652e7f241880b1f4b3dda5e37';
 
 export function VerificationModal() {
-  const [showModal, setShowModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const pathname = usePathname();
+  const [isOpen, setIsOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Don't show on the verify page itself
-    if (pathname?.startsWith('/verify/')) {
-      return;
-    }
-
-    const checkVerification = () => {
-      const verifiedUntil = localStorage.getItem('verified_until');
-      let isVerified = false;
-      
-      if (verifiedUntil && Date.now() < parseInt(verifiedUntil, 10)) {
-        isVerified = true;
-      } else {
-        localStorage.removeItem('verified_until');
-      }
-
-      if (!isVerified) {
-        if (pathname === '/') {
-          // Wait for splash screen to finish (3.5s)
-          const timer = setTimeout(() => setShowModal(true), 3600);
-          return () => clearTimeout(timer);
-        } else {
-          setShowModal(true);
-        }
+    // Check if verified after a small delay to ensure splash screen is done
+    const check = () => {
+      if (!isVerified()) {
+        setIsOpen(true);
       }
     };
-
-    checkVerification();
-  }, [pathname]);
+    
+    const timer = setTimeout(check, 4000); // After splash screen (3.5s)
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleVerify = async () => {
-    setIsLoading(true);
-    setError('');
     try {
-      const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('pendingVerificationToken', token);
-
-      const longUrl = `${window.location.origin}/verify/${token}`;
-
-      const response = await fetch('/api/shorten', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: longUrl }),
-      });
-
-      const data = await response.json();
-
-      if (data.shortUrl) {
-        window.location.href = data.shortUrl;
+      setLoading(true);
+      setError(null);
+      
+      const userId = getUserId();
+      const token = generateToken(userId);
+      
+      // Construct the destination URL
+      const origin = window.location.origin;
+      const destinationUrl = `${origin}/token?token=${token}&uid=${userId}`;
+      
+      // Shorten the link using VPLINK API
+      const apiUrl = `https://vplink.in/api?api=${VPLINK_API_TOKEN}&url=${encodeURIComponent(destinationUrl)}&format=text`;
+      
+      const response = await fetch(apiUrl);
+      const shortenedUrl = await response.text();
+      
+      if (shortenedUrl && shortenedUrl.startsWith('http')) {
+        // Redirect to the shortened link
+        window.location.href = shortenedUrl;
       } else {
-        setError('Failed to generate verification link. Please try again.');
-        setIsLoading(false);
+        throw new Error('Failed to generate verification link');
       }
     } catch (err) {
-      setError('An error occurred. Please try again.');
-      setIsLoading(false);
+      console.error('Verification error:', err);
+      setError('Something went wrong. Please try again.');
+      setLoading(false);
     }
   };
 
-  if (!showModal) return null;
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-md bg-zinc-950 border border-emerald-500/30 rounded-[2.5rem] p-8 relative shadow-[0_0_50px_rgba(16,185,129,0.15)] text-center"
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-zinc-950 border border-emerald-500/30 rounded-[2.5rem] p-8 shadow-[0_0_50px_rgba(16,185,129,0.15)]"
       >
-        <div className="w-20 h-20 bg-emerald-500/20 rounded-3xl flex items-center justify-center text-emerald-500 mx-auto mb-6">
-          <ShieldAlert className="w-10 h-10" />
-        </div>
-        <h2 className="text-2xl font-display font-bold mb-3">Verification Required</h2>
-        <p className="text-white/50 text-sm leading-relaxed mb-8">
-          To access VIP Study, you need to verify your session. Verification is quick and grants you access for 24 hours.
-        </p>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
-            {error}
+        <div className="flex flex-col items-center text-center">
+          <div className="w-20 h-20 bg-emerald-500/20 rounded-3xl flex items-center justify-center text-emerald-500 mb-6">
+            <ShieldCheck className="w-10 h-10" />
           </div>
-        )}
-
-        <button
-          onClick={handleVerify}
-          disabled={isLoading}
-          className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-500/50 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-[0_10px_30px_rgba(34,197,94,0.3)]"
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Generating Link...
-            </>
-          ) : (
-            <>
-              Verify Now
-              <ExternalLink className="w-4 h-4" />
-            </>
+          
+          <h3 className="text-2xl font-display font-bold mb-3">Verification Required</h3>
+          <p className="text-white/50 text-sm leading-relaxed mb-8">
+            To ensure the security of our premium resources, please complete a quick verification. 
+            This will grant you full access for the next 24 hours.
+          </p>
+          
+          {error && (
+            <div className="flex items-center gap-2 text-red-400 text-xs mb-6 bg-red-400/10 px-4 py-2 rounded-xl border border-red-400/20">
+              <AlertCircle className="w-4 h-4" />
+              {error}
+            </div>
           )}
-        </button>
+          
+          <button 
+            onClick={handleVerify}
+            disabled={loading}
+            className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-500/50 text-black font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-[0_10px_30px_rgba(16,185,129,0.3)]"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Generating Link...
+              </>
+            ) : (
+              <>
+                Verify Now
+                <ExternalLink className="w-4 h-4" />
+              </>
+            )}
+          </button>
+          
+          <p className="mt-6 text-[10px] uppercase tracking-widest text-white/20 font-bold">
+            Secure Verification by VIP Study
+          </p>
+        </div>
       </motion.div>
     </div>
   );
